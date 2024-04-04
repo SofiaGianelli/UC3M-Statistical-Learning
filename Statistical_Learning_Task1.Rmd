@@ -1,0 +1,677 @@
+---
+title: "Statistical Learning Project 1"
+author: "Sofía Gianelli"
+date: "2024-02-22"
+output:
+  html_document:
+    number_sections: yes   
+    toc: TRUE              
+    toc_float: TRUE
+subtitle: Body signal of smoking
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+Assuming we are a tobacco rehabilitation center, and we charge a ticket to buy the
+medicine for treating the health effects of smoking and treat the people who smokes. The aim of this project is to classify the people into "Smokers" and "Non-smokers" in
+order to maximize the profit of the charging tickets, by procuring the necessary medication and an excellent rehabilitation.
+
+The **dataset** was found in kaggle and the link to the dataset is the
+following:
+<https://www.kaggle.com/datasets/kukuroo3/body-signal-of-smoking?select=smoking.csv>
+
+The list of the variables in the data set is the following:
+
+**Target**
+
+-   'Smoking': Smoking status of the individual (smoker or non-smoker).
+
+**Categorical variables**
+
+-   'Gender': Gender of the individual (female or male).
+
+-   'Oral': Oral examination status, likely indicating whether an oral
+    examination was conducted (yes or no).
+
+-   'Dental_caries': Presence or status of dental caries (tooth decay).
+
+-   'Tartar': Status or presence of tartar on teeth (yes or no).
+
+-   'Urine_protein': Presence or level of protein in the urine.
+
+**Numeric variables**
+
+-   'ID': Identifier for each individual in the dataset.
+
+-   'Age': Age of the individual, likely categorized into 5-year
+    intervals.
+
+-   'Height': Height of the individual in centimeters.
+
+-   'Weight': Weight of the individual in kilograms.
+
+-   'Waist': Waist circumference length, measured in centimeters.
+
+-   'Eyesight_left': Measurement of eyesight for the left eye.
+
+-   'Eyesight_right': Measurement of eyesight for the right eye.
+
+-   'Hearing_left': Hearing assessment for the left ear.
+
+-   'Hearing_right': Hearing assessment for the right ear.
+
+-   'Systolic': Systolic blood pressure reading.
+
+-   'Relaxation': Diastolic blood pressure reading.
+
+-   'Fasting_blood_sugar': Level of blood sugar after fasting.
+
+-   'Cholesterol': Total cholesterol level in the blood.
+
+-   'Triglyceride': Triglyceride level in the blood.
+
+-   'HDL': High-density lipoprotein cholesterol level.
+
+-   'LDL': Low-density lipoprotein cholesterol level.
+
+-   'Hemoglobin': Level of hemoglobin in the blood.
+
+-   'Serum_creatinine': Level of creatinine in the serum, which is an
+    indicator of kidney function.
+
+-   'AST': Aspartate aminotransferase level, a liver enzyme.
+
+-   'ALT': Alanine aminotransferase level, a liver enzyme.
+
+-   'Gtp': Gamma-glutamyl transferase level, another liver enzyme.
+
+# Pre-processing
+
+```{r libraries, warning=FALSE,message=FALSE}
+library(readxl)
+library(ggplot2)
+library(caret)
+library(VIM)
+library(knitr)
+library(reshape2)
+library(corrplot)
+library(gridExtra)
+library(pROC)
+library(MASS)
+set.seed(1234)
+data <- read_xlsx("smoking.xlsx")
+```
+
+The first step was to take a look of the characteristics of the variables. The summary allows us to see which variables are numeric and which are categorical. As we can observe, the binary variables that are computed as (0,1) are considered as numeric, we will change it after.
+
+```{r summary}
+summary(data)
+```
+```{r string, include=FALSE}
+str(data)
+```
+
+## Duplicates and Colnames
+
+The next step was to check if there exist duplicated rows. And as we can observe the dataset doesn't contain duplicate rows.
+
+```{r duplicated row}
+# Checking for duplicated rows
+print(paste("Duplicate rows:", sum(duplicated(data))))
+```
+To improve data organization, we changed variable names by capitalizing the first letter and replacing spaces with underscores.
+
+```{r colnames}
+colnames(data) <- c("ID", "Gender", "Age", "Height","Weight", "Waist",
+                    "Eyesight_left", "Eyesight_right", "Hearing_left",
+                    "Hearing_right", "Systolic", "Relaxation",
+                    "Fasting_blood_sugar", "Cholesterol", "Triglyceride",
+                    "HDL", "LDL", "Hemoglobin", "Urine_protein",
+                    "Serum_creatinine", "AST", "ALT", "Gtp", "Oral",
+                    "Dental_caries", "Tartar", "Smoking")
+```
+
+## Split train and test 
+
+After cleaning the dataset, we split it into training and testing subsets to facilitate model development and evaluation. We divided into 80% train and 20% test. As we want to do it well, we ensure that the proportion of each class is preserved across both sets, leading to more representative model evaluation.
+
+```{r balance}
+table(data$Smoking)/length(data$Smoking)
+```
+As we can observe, the data contains 63% individuals that don't smoke and 37% that smoke.
+
+```{r spliting data}
+in_train <- createDataPartition(data$Smoking, p = 0.8, list = FALSE)  # 80% for training
+train <- data[ in_train,]
+test <- data[-in_train,]
+table(train$Smoking)/length(train$Smoking)
+```
+After splitting the dataset using the function __createDataPartition__, we ensured that the proportion remains exactly as before.
+
+The train and test dataset contained a column with the index of the individual, as it is unnecessary the identification or tracking of this individuals, we removed it.
+
+```{r index, echo=FALSE}
+train <- train[,-1]
+test <- test[,-1]
+```
+
+After removing the index, is necessary to check if we have rows that have exactly the same values across each column.
+
+```{r duplicated rows 2, echo=FALSE}
+# Checking for duplicated rows
+print(paste("Duplicate rows in train:", sum(duplicated(train))))
+print(paste("Duplicate rows in test:", sum(duplicated(test))))
+```
+As we can perceive, there were rows in the original dataset that had the same values for all columns except the index column, and when we removed the index column those rows become identical. So we need to remove it.
+
+```{r removing duplicate rows, echo=FALSE}
+# Remove duplicate rows from the dataframe
+train <- unique(train)
+test <- unique(test)
+
+# Check for duplicated rows in the unique dataframe
+print(paste("Duplicate rows in train after removing them:", sum(duplicated(train))))
+print(paste("Duplicate rows in test after removing them:", sum(duplicated(test))))
+```
+
+## Treating the NA's values
+
+One common step of the pre-processing is to check and correct the missing values (NA's), so the first thing that we made is corroborate if the train and test subset had missing values.
+
+```{r NAs in train}
+(colSums(is.na(train))/nrow(train))*100
+```
+
+```{r NAs in test}
+(colSums(is.na(test))/nrow(test))*100
+```
+We observed that the variable "Urine_protein" had some missing values in both subsets. Having missing values can cost several problems training and evaluating the models. In order to solve this problem, we performed an imputation of the missing values for both subsets. The method used is the "KNN Imputation", the kNN algorithm works by replacing missing values with the average of the k-nearest neighbors' values for the corresponding feature. The parameter "$k$" specifies the number of nearest neighbors to be used, and in this case we selected $k=5$. After applying this technique, we examined the dataset for any remaining missing values. As we can determinate, no additional missing values were present.
+
+```{r NAs imputation}
+train <- kNN(train[, colnames(train)], k = 5)
+test <- kNN(test[, colnames(test)], k = 5)
+original_vars <- colnames(train)
+imputed_vars <- grep("_imp$", colnames(train))
+train <- train[, -imputed_vars, drop = FALSE]
+test <- test[, -imputed_vars, drop = FALSE]
+sum(is.na(train))
+sum(is.na(test))
+```
+## Categorical variables into factor
+
+We wanted to maintain the order into the subsets so we ordered the variables like: first the categorical variables and then the numeric ones. 
+
+```{r ordering the variables}
+# Categorical first, then numeric
+train <- train[,c(26,1,8,9,18,23,24,25,2,3,4,5,6,7,10,11,12,13,14,15,16,17,19,20,21,22)]
+test <- test[,c(26,1,8,9,18,23,24,25,2,3,4,5,6,7,10,11,12,13,14,15,16,17,19,20,21,22)]
+```
+
+Before proceed to make some data visualization we had to change the string of the categorical variables into factor form in both subsets..
+
+```{r factorizing the variables}
+# Categorial as factor
+# Train data
+train$Smoking <- factor(train$Smoking)
+train$Dental_caries <- factor(train$Dental_caries)
+train$Urine_protein <- factor(train$Urine_protein)
+train$Oral <- ifelse(train$Oral == "Y", 1, 0)
+train$Gender <- ifelse(train$Gender == "F", 1, 0)
+train$Tartar <- ifelse(train$Tartar == "Y", 1, 0)
+train$Gender <- factor(train$Gender)
+train$Tartar <- factor(train$Tartar)
+train$Oral <- factor(train$Oral)
+
+# Test data
+test$Smoking <- factor(test$Smoking)
+test$Dental_caries <- factor(test$Dental_caries)
+test$Urine_protein <- factor(test$Urine_protein)
+test$Oral <- ifelse(test$Oral == "Y", 1, 0)
+test$Gender <- ifelse(test$Gender == "F", 1, 0)
+test$Tartar <- ifelse(test$Tartar == "Y", 1, 0)
+test$Gender <- factor(test$Gender)
+test$Tartar <- factor(test$Tartar)
+test$Oral <- factor(test$Oral)
+```
+
+# Exploratory Data Analysis
+
+**Smoking binary**
+
+```{r smoking plot, fig.height=3,fig.width=3, echo=FALSE}
+ggplot(train, aes(x = Smoking)) +
+  geom_bar(aes(fill = factor(after_stat(count))), stat = "count") +
+  labs(title = "Smoking Frequency", x = "Smoking", y = "Frequency",
+       fill = "Count") +  
+  scale_fill_manual(values = c("lightsteelblue3", "salmon")) + 
+  theme(axis.text.x = element_text(size = 8),
+        axis.text.y = element_text(size = 8),
+        panel.background = element_rect(fill = "transparent"))
+```
+
+Based on the previous graph, we have that the majority of the individuals don't smoke. So we will look how it is the proportion of smokers and non-smokers in each category of the categorical variables. 
+
+```{r categorical variables, echo=FALSE, warning=FALSE}
+plot <- list()
+for (i in 2:8) {
+  col_name <- colnames(train)[i]
+  plot[[i - 1]] <- ggplot(data = train, aes_string(x = col_name, fill = train$Smoking)) +
+    geom_bar() +
+    labs(x = col_name,
+         y = "Frequency",
+         fill = "Smoking") +
+    theme_minimal()
+}
+
+grid.arrange(grobs = plot, nrow = 3)
+```
+
+For the gender, the proportion of smokers is bigger for males than for females. For "Hearing_left", "Hearing_right", "Urine_protein" and "Oral" the proportion is almost the same as we have seen before, because this variables have an enormous concentration in one variable. For the variable "Dental_caries", we noted that the proportion of individuals who smoke versus those who don't smoke is consistent among those without dental caries. However, among individuals with dental caries, over 50% were observed to be smokers. Finally, we observed that for the individuals with tartar, the proportion of non-smoker is more even than for individuals without tartar.
+
+After analyzed the categorical variable, we needed to know the density of the numeric variables. This visualization is crucial for determining the most suitable transformation for each variable. In the dataset are 18 numeric variables so we splitted into two graphs.
+
+```{r numeric variables, echo=FALSE}
+plot_list1 <- list()
+for (i in 9:17) {
+  col_name <- colnames(train)[i]
+  plot_list1[[i - 8]] <- ggplot(train, aes_string(x = col_name)) +
+    geom_density(fill = 'violetred4', color = 'black', alpha = 0.5) +
+    labs(title = col_name, x = "Values", y = "Density") +
+    theme_minimal()
+}
+grid.arrange(grobs = plot_list1, nrow = 3)
+```
+
+Looking at the graphs, we decided that the variables which have left skewness needed a logarithm transformation. In this case, the first three variables are the ages, height and weight of the individuals, and there aren't any transformation to do it. "Waist", "Systolic" and "Relaxation" have a density more or less normal, so this variables didn't need any transformaion. The variables "Eyesight_left", "Eyesight_right", and "Fasting_blood_sugar" are the one that we transformed into logarithm.
+
+```{r numeric variables 2, echo=FALSE}
+plot_list2 <- list()
+for (i in 18:26) {
+  col_name <- colnames(train)[i]
+  plot_list2[[i - 17]] <- ggplot(train, aes_string(x = col_name)) +
+    geom_density(fill = 'violetred4', color = 'black', alpha = 0.5) +
+    labs(title = col_name, x = "Values", y = "Density") +
+    theme_minimal()
+}
+grid.arrange(grobs = plot_list2, nrow = 3)
+```
+
+For this variables we concluded that the variables "HDL", "Triglyceride", "LDL", "Serum_creatinine", "AST", "ALT" and "GTP" need a logarithm transformation for the left skewness of the density. For "Hemoglobine" we applied the power of two transformation because the density has a right skewness instead of left. Finally, "Cholesterol" have a normal distribution so we decided to maintain it.
+
+```{r correlation matrix, echo=FALSE}
+numeric_train <- train[sapply(train, is.numeric)]
+correlation_matrix <- cor(numeric_train)
+melted_correlation <- melt(correlation_matrix)
+heatmap <- ggplot(melted_correlation, aes(Var1, Var2, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(low = "#030303", mid = "#FFFFE0", high = "maroon4", midpoint = 0, limit = c(-1,1),
+                       space = "Lab", name="Correlation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.justification = c(1, 0))
+print(heatmap)
+```
+
+The final stage of data visualization involved examining the correlation between numeric variables to uncover any significant insights. While the correlation heatmap initially suggests, there exist some strong correlation between some variables. For example, the variables that refers to left or right eyesight or hearing are strongly correlated between the other side. The variable "Age", "Height" and "Weight" are correlated with the other body signal because this signals change in terms of this variables. In conclusion, there exists some correlation between the variables but not a perfect correlation to give us problems in the model implementation.
+
+## Transformations
+
+The first step of this section is to omit the variables "Oral", "Urine_protein", Hearing_left" and "Hearing_right" because of having only one level or much more
+concentration in only one level.
+
+```{r omit variables, echo=FALSE}
+final_train <- train[,-c(3,4,5,6)]
+final_test <- test[,-c(3,4,5,6)]
+```
+
+The second step of this transformation process is to apply the log transformation
+to the variable with skewness.
+
+```{r transformation, echo=FALSE}
+# Log transformation
+# Train data
+final_train[, c(9,10,13,15,16,17,19,20,21,22)] <- log(final_train[,c(9,10,13,15,16,17,19,20,21,22)])
+final_test[, c(9,10,13,15,16,17,19,20,21,22)] <- log(final_test[, c(9,10,13,15,16,17,19,20,21,22)])
+# 
+final_train[,18] <- final_train[,18]**2
+final_test[,18] <- final_test[,18]**2
+transformed_columns <- c(9,10,13,15,16,17,18,19,20,21,22)
+```
+
+```{r transformed variales, include=FALSE}
+plot_list3 <- list()
+for (i in transformed_columns) {
+  col_name <- colnames(final_train)[i]
+  plot_list3[[i - 8]] <- ggplot(final_train, aes_string(x = col_name)) +
+    geom_density(fill = 'violetred4', color = 'black', alpha = 0.5) +
+    labs(title = col_name, x = "Values", y = "Density") +
+    theme_minimal()
+}
+grid.arrange(grobs = plot_list3, nrow = 3)
+```
+
+
+
+## Outliers
+
+The models that we are going to perform in the following stage can be sensitive to outliers so we tried to identify and remove them before performing the models.
+To check if the variables have outliers so we made boxplot graph to identify them.
+
+```{r box plot 1, echo=FALSE}
+par(mfrow=c(2, 3))
+for(i in 5:10) {  
+  boxplot(final_train[, i], 
+          main = paste(names(final_train)[i]),
+          ylab = "Values", col = "#EE1289")
+}
+```
+
+```{r box plot 2, echo=FALSE}
+par(mfrow=c(2, 3))
+for(i in 11:16) {  
+  boxplot(final_train[, i], 
+          main = paste(names(final_train)[i]),
+          ylab = "Values", col = "#EE1289")
+}
+```
+
+As we can observe every variable have outliers, so we made a function to try to detect and remove them. This function detects outliers in specified numeric columns of a dataframe and identifies rows containing a significant number of outliers to be potentially dropped from the dataset.
+
+```{r outlier function}
+outlier_detection <- function(df, n, columns) {
+  rows <- c()
+  will_drop_train <- c()
+  for (col in columns) {
+    Q1 <- quantile(df[[col]], 0.25, na.rm = TRUE)
+    Q3 <- quantile(df[[col]], 0.75, na.rm = TRUE)
+    IQR <- Q3 - Q1
+    outlier_point <- 1.5 * IQR
+    rows <- c(rows, which(df[[col]] < Q1 - outlier_point | df[[col]] > Q3 + outlier_point))
+  }
+  row_counts <- table(rows)
+  for (r in names(row_counts)) {
+    if (row_counts[r] >= n) {
+      will_drop_train <- c(will_drop_train, as.integer(r))
+    }
+  }
+  return(will_drop_train)
+}
+```
+
+```{r drop outliers train}
+will_drop_train <- outlier_detection(final_train, 5, names(final_train)[sapply(final_train, is.numeric)])
+head(will_drop_train, 5)
+final_train <- final_train[-will_drop_train, ]
+```
+```{r drop outlier test}
+will_drop_test <- outlier_detection(final_test, 5, names(final_test)[sapply(final_test, is.numeric)])
+head(will_drop_test, 5)
+final_test <- final_test[-will_drop_test, ]
+```
+As the can observe, we detected the outliers and we removed it from the train and test dataset. The output give us the index of the outliers removed.
+
+## Scaling
+
+The last step before perform the model was to scale the numeric variables, because the variables weren't in the same scale and this might be detrimental for the performance.
+
+```{r scale}
+final_train[,5:22] <- scale(final_train[,5:22])
+final_test[,5:22] <- scale(final_test[,5:22])
+```
+
+# Modelling
+
+this section focuses on building, evaluating, and optimizing models for classify the individuals who smokes, considering the prediction accuracy and economic implications.
+
+We started by setting up a 5-fold cross-validation with one repeat method using the __trainControl__ function. This ensures us robust evaluation of our models.
+
+```{r cv}
+ctrl <- trainControl(method = "repeatedcv", 
+                     repeats = 1,
+                     number = 5)
+```
+
+## Logistic Regression
+
+The first model applied was Logistic Regression, using the binomial glmnet method. Logistic regression is a type of regression analysis used when the dependent variable is categorical. It's particularly useful for binary outcomes, like our case.
+
+```{r logistic regression}
+log_model <- train(Smoking ~ ., 
+                method = "glmnet",
+                family = "binomial",
+                data = final_train,
+                preProcess = c("center", "scale"),
+                metric = "Accuracy",
+                trControl = ctrl)
+```
+
+```{r predict logistic}
+log_pred <- predict(log_model, final_test,type="prob")
+predict_log <- as.factor(ifelse(log_pred[, "1"] > 0.5, 1, 0))
+log_confusion_matrix <- confusionMatrix(predict_log,final_test$Smoking)
+print(log_confusion_matrix)
+```
+After applying the logistic regression model, we predicted probabilities of the variable "Smoking" being in class 1 (smoker) for each observation. Then, based on the predicted probabilities, we applied a threshold of 0.5 to classify each observation into one of two classes: 0 (non-smoker) or 1 (smoker).
+
+The result of this method was shown in the previous confusion matrix. The model has an accuracy of 75%, predicting better the non-smokers than the smokers.
+
+## Linear Discriminant Analysis
+
+Continuing with the models implementation, we made a linear discriminant analysis. This analysis is useful as classification technique to distinguish between two or more classes or categories based on a set of predictor variables. Even though is more useful for the categorical variable which has more than two classes, we implemented to evaluate how well perform.
+
+```{r lda model}
+lda_model <- train(Smoking ~ ., 
+                method = "lda", 
+                data = final_train,
+                preProcess = c("center", "scale"),
+                metric = "Accuracy",
+                trControl = ctrl)
+```
+
+```{r lda prediction}
+lda_pred <- predict(lda_model, final_test,type="prob")
+predict_lda <- as.factor(ifelse(lda_pred[, "1"] > 0.5, 1, 0))
+lda_confusion_matrix <- confusionMatrix(predict_lda,final_test$Smoking)
+print(lda_confusion_matrix)
+```
+The step after applying the model is the same as the logistic regression. In this case, the accuracy is almost 76%, which is better than the logistic, and the performance of the false positive rate is better.
+
+## Quadratic Discriminant Analysis
+
+The next model to be implemented is the quadratic discriminant analysis. This technique is a classification algorithm closely related to the LDA but with a difference in the assumption about the covariance matrices of the predictor variables. While LDA assumes that all classes share the same covariance matrix for their predictor variables, QDA have the assumption that each class have its own covariance matrix. 
+
+```{r qda model}
+qda_model <- train(Smoking ~ ., 
+                method = "qda", 
+                data = final_train,
+                preProcess = c("center", "scale"),
+                metric = "Accuracy",
+                trControl = ctrl)
+
+```
+
+```{r qda prediction}
+qda_pred <- predict(qda_model, final_test,type="prob")
+predict_qda <- as.factor(ifelse(qda_pred[, "1"] > 0.5, 1, 0))
+qda_confusion_matrix <- confusionMatrix(predict_qda,final_test$Smoking)
+print(qda_confusion_matrix)
+```
+In this case, while the false positive rate decreased, the false negative rate increased, resulting in a lower overall accuracy of 73%, compared to the previous models.
+
+## Naive Bayes
+
+Finally, the last model to be applied is the naive bayes classifier. Naive Bayes calculates the probability of each class given a set of input features and selects the class with the highest probability as the predicted class label. It is easy to implement and very useful for large datasets, but have the independence assumption that can be a problem if the datasets have highly correlation between the predictors.
+
+```{r naive bayes model}
+naive_model <- train(Smoking ~ ., 
+                  method = "naive_bayes", 
+                  data = final_train,
+                  preProcess = c("center", "scale"),
+                  metric = "Accuracy",
+                  trControl = ctrl)
+```
+
+```{r naive bayes prediction}
+naive_pred <- predict(naive_model, final_test,type="prob")
+predict_naive <- as.factor(ifelse(naive_pred[, "1"] > 0.5, 1, 0))
+naive_confusion_matrix <- confusionMatrix(predict_naive,final_test$Smoking)
+print(naive_confusion_matrix)
+```
+After applying the model and making the prediction, the accuracy is 71%, the lowest one in this project. Even though the false positive rate decreased a lot, the increase of the false negative is simpler too much.
+
+## ROC
+
+Finally, once the model were implemented, we made the ROC curves. This is a graphical representation that illustrates the performance of a binary classification model across various threshold settings. It plots the true positive rate (sensitivity) against the false positive rate (specificity) for different threshold values. The area under the ROC curve (AUC) quantifies the model's ability to distinguish between the two classes, with higher AUC values indicating better discrimination performance.
+
+```{r ROC, warning=FALSE, message=FALSE, echo=FALSE}
+# ROC 
+roc_log =roc(final_test$Smoking, log_pred[,2])
+roc_lda =roc(final_test$Smoking, lda_pred[,2])
+roc_qda =roc(final_test$Smoking, qda_pred[,2])
+roc_naive =roc(final_test$Smoking, naive_pred[,2])
+
+# Calculate AUC values
+auc_log <- round(auc(final_test$Smoking, log_pred[,2]), 3)
+auc_lda <- round(auc(final_test$Smoking, lda_pred[,2]), 3)
+auc_qda <- round(auc(final_test$Smoking, qda_pred[,2]), 3)
+auc_naive <- round(auc(final_test$Smoking, naive_pred[,2]), 3)
+
+# Plot ROC curves
+plot(roc_log, col="orchid3", lwd=3, lty=2,type="l")
+plot(roc_lda, col='pink4', add=TRUE, print.thres=TRUE, lwd=3,type="l")
+plot(roc_qda, col='darkviolet', add=TRUE, lwd=3,type="l")
+plot(roc_naive, col='#FA8072', add=TRUE, lwd=3,type="l")
+
+# Add AUC values as text
+text(0.1, 0.25, paste("Logistic Regression AUC =", auc_log), col="orchid3", cex=0.9)
+text(0.1, 0.18, paste("LDA AUC =", auc_lda), col="pink4", cex=0.9)
+text(0.1, 0.11, paste("QDA AUC =", auc_qda), col="darkviolet", cex=0.9)
+text(0.1, 0.04, paste("Naive Bayes AUC =", auc_naive), col="#FA8072", cex=0.9)
+
+# Add legend
+legend("topleft", legend=c("Logistic Regression", "LDA", "QDA", "Naive Bayes"), col=c("orchid3", "pink4", "darkviolet","#FA8072"), lwd=3, cex=0.7)
+
+```
+
+In this graph we can observe that the AUC is similar in each model, but the highest AUC is LDA one, which is the one with the highest accuracy. Given the performance of each model, we decided to incorporating an economic impact to find the right threshold that fit the most to our goal.
+
+## Incorporating economic impact
+
+After evaluating all the models, we decide to continue the analysis with
+the model with the highest "AUC" and accuracy, which is the Linear Discriminant Analysis. 
+
+Now as we want to maximize our profit by having more people treating in the center, our focus is on finding the most effective threshold. This threshold should help us minimize the chances of misidentifying smokers as non-smokers. This means that we want to ensure that our model is accurate in distinguishing between a person who smoke and those who don't, as this directly impacts our profit.
+
+Remembering our confusion matrix using the Linear Discriminant Analysis:
+
+```{r lda confussion matrix}
+lda_confusion_matrix$table
+```
+We need to improve the 1004 of misidentifying smokers as non-smokers. In
+simpler words, we need to find a smaller threshold to decrease the
+non-smokers prediction. In order to do this, we will come up with a profit
+vector to be maximize it.
+
+- Predicting a smoker accurately yields a profit of 20% (for correctly identifying a smoker).
+- Predicting a non-smoker accurately incurs no profit or loss.
+- Predicting a smoker inaccurately (as a non-smoker) results in a loss of 5%.
+- Predicting a non-smoker inaccurately (as a smoker) leads to a loss of 100%.
+
+```{r find the threshold}
+# Define the cost associated with each classification outcome
+profit.unit <- c(0.2, -0.05, -1.0, 0.0)  # Cost of misclassifying smokers as non-smokers  
+
+# Initialize a matrix to store cost values for different thresholds
+profit.i <- matrix(NA, nrow = 50, ncol = 11)
+
+# Define the prior probabilities for each class
+p0 <- 0.6319747
+p1 <- 1 - p0
+
+# Loop through different thresholds
+j <- 0
+for (threshold in seq(0.3, 0.8, 0.05)) {
+  j <- j + 1
+  cat(j)
+  for (i in 1:50) {
+     # Partition data into training (40%) and testing sets (60%)
+    d <- createDataPartition(final_train$Smoking, p = 0.4, list = FALSE)
+    train_loop <- final_train[d,]
+    test_loop <- final_test[-d,]  
+    
+    # Fit Linear Discriminant Analysis model
+    model <- lda(Smoking ~ ., data = train_loop, prior = c(p0, p1))
+    
+   # Posterior probabilities
+    probability = predict(model, test_loop)$posterior
+    
+    # Predictions with a given threshold
+    predictions = rep(0, nrow(test_loop))
+    predictions[which(probability[,2] > threshold)] = 1
+    
+    CM = confusionMatrix(factor(predictions), test_loop$Smoking)$table
+
+    profit.applicant <- sum(profit.unit*CM)/sum(CM)
+    profit.i[i,j] <- profit.applicant
+  }
+}
+```
+```{r thresholds boxplots}
+boxplot(profit.i, main = "Threshold Selection for Profit Optimization",
+        ylab = "Unit Profit",
+        xlab = "Threshold",
+        names = seq(0.3, 0.8, 0.05),
+        col = "darkorchid2")
+```
+
+As we can see, the best threshold is 0.3 because is the one what maximize our profit per unit.
+
+If we want to see the median profit with each threshold, we can see that the bigger profit per unit is the second one (the one with a 0.3 threshold)
+
+```{r median profit}
+apply(profit.i, 2, median) #choose the threshold that maximize the median of the profit.
+```
+After finding the best threshold for our objective, we wanted to find this profit applicant that maximize our total profit.
+
+```{r profit per applicant}
+final_lda_model <- train(Smoking ~ ., 
+                method = "lda", 
+                data = final_train,
+                preProcess = c("center", "scale"),
+                metric = "Accuracy",
+                trControl = ctrl)
+final_probability <- predict(final_lda_model, newdata=final_test,type="prob")
+final_threshold <- 0.3
+final_predictions <- rep(0, nrow(final_test))
+final_predictions[which(final_probability[,2] > final_threshold)] = 1
+CM <- confusionMatrix(factor(final_predictions), reference = final_test$Smoking)$table
+profit.applicant <- sum(profit.unit*CM)/sum(CM)
+profit.applicant
+```
+```{r final accuracy}
+CM_final <- confusionMatrix(factor(final_predictions), reference=final_test$Smoking)
+CM_final$overall[1]
+```
+As we can observed, the accuracy of this prediction is a little bit less than the one obtained before, but this wasn't our goal. We wanted to find the best threshold to decrease the false positive rate and not decrease so much the accuracy. 
+
+```{r final confussion matrix}
+CM_final$table
+```
+The false positive rate is the lowest obtained in this project, and the accuracy of almost 72% is still a good result given our data.
+
+If the average  amount is 3000 euros, and there are over 20500 applicants in one month then the expected profit in 1 year for the applicants is:
+
+```{r profit}
+profit.applicant*3000*20500
+```
+# Conclusion
+
+In this project we made four different models to achieve the better classification to our profit maximization profit. We concluded that the best model was the LDA, and after applying out economic effect, we obtained the best threshold and the profit maximized.
+
+
+
+
+

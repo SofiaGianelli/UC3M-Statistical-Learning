@@ -1,0 +1,935 @@
+---
+title: "Statistical Learning - Task 2"
+author: "Sofía Gianelli"
+date: "March, 2024"
+output:
+  html_document:
+    number_sections: yes   
+    toc: TRUE              
+    toc_float: TRUE
+subtitle: "Online Shoppers Purchasing Intention"
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+The aim of this project is to identify those individuals who will
+purchased some specific product by online. In order to simplify the
+work, we will assume that we are a company that sells books. We want to
+investigate if is possible to have an eCommerce, so we will proceed to
+analyze some variables related to the behavior of the individuals in a
+website. The variables to be taken into account are:
+
+[**Target**]{style="font-size: 20px;"}
+
+-   **Revenue**: Indicates whether the visit resulted in revenue
+    generation. When the variable is "FALSE" means that the individual
+    didn't purchased at least one product, and when is equal to "TRUE"
+    the individual did purchased.
+
+[**Categorical variables**]{style="font-size: 20px;"}
+
+-   **Month**: Represents the month of the visit.
+-   **Operating Systems**: Represents the visitor's operating system.
+-   **Browser**: Represents the visitor's browser.
+-   **Region**: Represents the visitor's geographical region.
+-   **Traffic Type**: Represents the source of traffic to the website.
+-   **Visitor Type**: Represents whether the visitor is a returning or
+    new visitor.
+-   **Weekend**: Indicates whether the visit occurred on a weekend.
+
+[**Numeric variables**]{style="font-size: 20px;"}
+
+-   **Administrative**: Represents the number of administrative pages
+    visited by the visitor in a session.
+-   **Administrative Duration**: Represents the total time spent by the
+    visitor on administrative pages.
+-   **Informational**: Represents the number of informational pages
+    visited by the visitor in a session.
+-   **Informational Duration**: Represents the total time spent by the
+    visitor on informational pages.
+-   **Product Related**: Represents the number of product-related pages
+    visited by the visitor in a session.
+-   **Product Related Duration**: Represents the total time spent by the
+    visitor on product-related pages.
+-   **Bounce Rates**: Represents the percentage of visits in which the
+    visitor left the site from the landing page.
+-   **Exit Rates**: Represents the percentage of exits from the website.
+-   **Page Values**: Represents the average value for a web page that a
+    user visited before completing an e-commerce transaction.
+-   **Special Day**: Indicates the closeness of the site visiting time
+    to a specific special day, such as Valentine's Day or Mother's Day.
+
+# Pre-processing
+
+## Libraries and loading the dataset
+
+```{r libraries, warning=FALSE,message=FALSE}
+library(readxl)
+library(ggplot2)
+library(caret)
+library(VIM)
+library(knitr)
+library(reshape2)
+library(corrplot)
+library(gridExtra)
+library(pROC)
+library(MASS)
+library(tidyr)
+library(class)
+library(e1071)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(gbm)
+set.seed(1999)
+```
+
+```{r}
+dataset <- read.csv("online_shoppers_intention.csv", sep = ",")
+```
+
+```{r summary}
+summary(dataset)
+```
+
+```{r string, include=FALSE}
+str(dataset)
+```
+
+In this case, we observed some basic statistics about the variables. We
+have 8 categorical variables and 10 numeric. In general, the variables
+don't have so much variablity in their distributions.
+
+## Duplicates and Colnames
+
+The next step was to check if there exist duplicated rows.
+
+```{r duplicated row}
+# Checking for duplicated rows
+print(paste("Duplicate rows:", sum(duplicated(dataset))))
+```
+
+As we can observe the dataset contains duplicate rows, so we will
+proceed to remove it.
+
+```{r removing duplicate rows, echo=FALSE}
+# Remove duplicate rows from the dataframe
+dataset <- unique(dataset)
+
+# Check for duplicated rows in the unique dataframe
+print(paste("Duplicate rows:", sum(duplicated(dataset))))
+```
+
+Now, we have 0 duplicate rows.
+
+## Categorical variables into factor
+
+Before spliting the dataset into train and test, we wanted to maintain
+the order into the subsets so we ordered the variables like: first the
+categorical variables and then the numeric ones.
+
+```{r ordering the variables}
+# Categorical first, then numeric
+dataset <- dataset[,c(18,11,12,13,14,15,16,17,1,2,3,4,5,6,7,8,9,10)]
+```
+
+Before proceed to make some data visualization we had to change the
+string of the categorical variables into factor form in the dataset.
+
+```{r factorizing the variables}
+dataset$Revenue <- ifelse(dataset$Revenue == "TRUE", "TRUE", "FALSE")
+# Categorical as factor
+dataset[, 1:8] <- lapply(dataset[, 1:8], factor)
+```
+
+## Split train and test
+
+After cleaning the dataset, we split it into training and testing
+subsets to facilitate model development and evaluation. We divided into
+80% train and 20% test. As we want to do it well, we ensure that the
+proportion of each class is preserved across both sets, leading to more
+representative model evaluation.
+
+```{r balance}
+table(dataset$Revenue)/length(dataset$Revenue)
+```
+
+We have a 84,37% of the individuals that didn't purchased the product,
+but the rest of the 15,63% purchased it.
+
+```{r spliting data}
+in_train <- createDataPartition(dataset$Revenue, p = 0.8, list = FALSE)  # 80% for training
+train <- dataset[ in_train,]
+test <- dataset[-in_train,]
+table(train$Revenue)/length(train$Revenue)
+```
+
+After splitting the dataset using the function **createDataPartition**,
+we ensured that the proportion remains exactly as before.
+
+## Treating the NA's values
+
+One common step of the pre-processing is to check and correct the
+missing values (NA's), so the first thing that we made is corroborate if
+the train and test subset had missing values.
+
+```{r NAs in train}
+sum(is.na(train))
+sum(is.na(test))
+```
+
+# Exploratory Data Analysis
+
+**Target**
+
+```{r target plot,fig.height=4,fig.width=3, echo=FALSE}
+# Calculate the percentage of each group
+percentage <- prop.table(table(train$Revenue)) * 100
+
+# Create a data frame for the labels
+label_data <- data.frame(Revenue = names(percentage), 
+                         Percentage = as.numeric(percentage))
+
+ggplot(label_data, aes(x = Revenue, y = Percentage, fill = Revenue)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(round(Percentage, 2), "%")),
+            vjust = -0.5, size = 3) +
+  labs(title = "Online Shoppers", x = "Revenue", y = "Percentage",
+       fill = "Count") +  
+  scale_fill_manual(values = c("#D8BFD8", "#EE9572")) +  
+  theme(axis.text.x = element_text(size = 6),
+        axis.text.y = element_text(size = 6),
+        panel.background = element_rect(fill = "transparent"),
+        legend.position = "none",
+        plot.title = element_text(size = 8))
+```
+
+As we observed before, the are much more people who didn't purchased a
+product even though they surfed in the website.
+
+**Categorical Variables**
+
+```{r categorical variables, echo=FALSE, warning=FALSE}
+# Create a ggplot object with facet_wrap
+ggplot(pivot_longer(train, cols = 2:8, names_to = "Variable"), 
+       aes_string(x = "value", fill = "Revenue")) +
+    geom_bar() +
+  labs(x = "Value",
+       y = "Frequency",
+       fill = "Online Shoppers") +
+  facet_wrap(~ Variable, scales = "free") +
+  theme_minimal() +
+  scale_fill_manual(values = c("#D8BFD8", "#EE9572"))
+```
+
+If we observe the above graphs, we could deduce that the most used
+browser is the type 2, that this could be the Google Chrome browser. The
+months with more views in the website are May, November and March.
+However, even though the month that more people visit the website is not
+the month that more people purchased the product, this month is
+November. The operating system most used is the type 2 one, we will
+assume that is Windows. Returning visitors are the people that visit and
+purchased the most. Finally, we can observe that on weekends, the
+individuals surf into the website and purchased less than in the in the
+week.
+
+In addition, we observed that the variables TraffiyType and Browser have
+1 or 0 observations in one of the levels, and this can cause some
+problems training the models, so we decided to remove them.
+
+```{r}
+# For TrafficType variable
+train <- train[!(train$TrafficType %in% c("17", "12")), ]
+train$TrafficType <- droplevels(train$TrafficType)
+test <- test[!(test$TrafficType %in% c("17", "12")), ]
+test$TrafficType <- droplevels(test$TrafficType)
+
+# For Browser variable
+train <- train[train$Browser != "9", ]
+train$Browser <- droplevels(train$Browser)
+test <- test[test$Browser != "9", ]
+test$Browser <- droplevels(test$Browser)
+```
+
+**Numerical variables**
+
+```{r correlation matrix, echo=FALSE}
+numeric_train <- train[sapply(train, is.numeric)]
+correlation_matrix <- cor(numeric_train)
+melted_correlation <- melt(correlation_matrix)
+ggplot(melted_correlation, aes(Var1, Var2, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(low = "#030303", mid = "#FFE4E1", high = "lightsalmon4", midpoint = 0, limit = c(-1,1),
+                       space = "Lab", name="Correlation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.justification = c(1, 0)) +
+  labs(title = "Correlation Heatmap")
+```
+
+The previous heatmap is a correlation matrix of the numeric variables.
+The variable "administrative" is correlated with almost every variable
+except for "pagevalues". In addition, we can see that the variables that
+have the number of visit and number of time spent in this type of page
+are highly correlated between them. Finally, "exitpages" is negative
+correlated with almost every variable, which makes sense.
+
+The next step of this proyect is to discern the distribution of the
+numeric variables to check if we have to make some transformation to
+avoid problems in the future models.
+
+```{r numeric variables, echo=FALSE}
+ggplot(pivot_longer(train, cols = 9:18, names_to = "Variable"), 
+       aes_string(x = "value", fill = "Revenue")) +
+  geom_density(alpha = 0.8) +
+  labs(x = "Value",
+       y = "Density",
+       fill = "Online Shoppers") +
+  facet_wrap(~ Variable, scales = "free") +
+  theme_minimal() +
+  scale_fill_manual(values = c("#D8BFD8", "#EE9572"))
+```
+
+As we can observe, the distributions are concentrated in the left, with
+a huge concentration in zero. In order to continue evaluating which
+transformations make we will calculate the skewness and kurtosis of each
+variable. Skewness and kurtosis are statistical measures used to
+describe the shape of a distribution. Skewness measures the asymmetry of
+the distribution. It tells us whether the data is skewed to the left or
+right or whether it is symmetric. Kurtosis tells us whether the data is
+heavy-tailed or light-tailed compared to a normal distribution.
+
+**Skewness and Kurtosis**
+
+```{r}
+# Calculate skewness and kurtosis for each variable individually
+skewness_values <- numeric(length = ncol(train[, 9:18]))
+kurtosis_values <- numeric(length = ncol(train[, 9:18]))
+
+for (i in seq_along(skewness_values)) {
+  skewness_values[i] <- skewness(train[, 9:18][[i]])
+  kurtosis_values[i] <- kurtosis(train[, 9:18][[i]])
+}
+
+# Create a data frame for the skewness and kurtosis values
+stats_df <- data.frame(
+  Variable = colnames(train[, 9:18]),
+  Skewness = round(skewness_values, 2),
+  Kurtosis = round(kurtosis_values, 2),  
+  stringsAsFactors = FALSE
+)
+
+# Print the skewness table
+kable(stats_df, caption = "Skewness and Kurtosis of Numeric Variables")
+```
+
+The skewness and kurtosis are both positive, and some variables with
+high values, so we can deduce that the distributions is on the right
+side with heavy tails compared to a normal distribution. After analyse
+the graphs and the statistical measures we decide to transform every
+numeric variable applying the logarithm + 10 to make the distribution
+more symetric.
+
+## Transformations
+
+```{r}
+# logarithmic transformations
+train[,9:18] <- log(train[,9:18]+10)
+```
+
+```{r numeric variables2, echo=FALSE, warning=FALSE}
+ggplot(pivot_longer(train, cols = 9:18, names_to = "Variable"), 
+       aes_string(x = "value", fill = "Revenue")) +
+  geom_density(alpha = 0.8) +
+  labs(x = "Value",
+       y = "Density",
+       fill = "Online Shoppers") +
+  facet_wrap(~ Variable, scales = "free") +
+  theme_minimal() +
+  scale_fill_manual(values = c("#D8BFD8", "#EE9572"))
+```
+
+Some variables didn't change much after applying the transformation but
+some of them like ProductRelated and ProductRelated_Duration are much
+better, so will continue the analysis with the variables transformed.
+
+## Outliers
+
+The models that we are going to perform in the following stage can be
+sensitive to outliers so we tried to identify and remove them before
+performing the models. To check if the variables have outliers so we
+made boxplot graph to identify them.
+
+```{r box plot, echo=FALSE}
+ggplot(pivot_longer(train, cols = 9:18, names_to = "Variable"), 
+       aes_string(x = "Revenue", y = "value", fill = "Revenue")) +
+  geom_boxplot(alpha = 0.8) +
+  labs(x = "Online Shoppers",
+       y = "Value",
+       fill = "Revenue") +
+  facet_wrap(~ Variable, scales = "free") +
+  theme_minimal() +
+  scale_fill_manual(values = c("#D8BFD8", "#EE9572"))
+```
+
+As we can observe, there is some outliers, so we will use a function to
+remove it.
+
+```{r outlier function}
+outlier_detection <- function(df, n, columns) {
+  rows <- c()
+  will_drop_train <- c()
+  for (col in columns) {
+    Q1 <- quantile(df[[col]], 0.25, na.rm = TRUE)
+    Q3 <- quantile(df[[col]], 0.75, na.rm = TRUE)
+    IQR <- Q3 - Q1
+    outlier_point <- 1.5 * IQR
+    rows <- c(rows, which(df[[col]] < Q1 - outlier_point | df[[col]] > Q3 + outlier_point))
+  }
+  row_counts <- table(rows)
+  for (r in names(row_counts)) {
+    if (row_counts[r] >= n) {
+      will_drop_train <- c(will_drop_train, as.integer(r))
+    }
+  }
+  return(will_drop_train)
+}
+```
+
+```{r drop outliers train}
+will_drop_train <- outlier_detection(train, 5, names(train)[sapply(train, is.numeric)])
+head(will_drop_train, 5)
+train <- train[-will_drop_train, ]
+```
+
+```{r drop outlier test}
+will_drop_test <- outlier_detection(test, 5, names(test)[sapply(test, is.numeric)])
+head(will_drop_test, 5)
+test <- test[-will_drop_test, ]
+```
+
+We detected outliers from test and train dataset and we removed it. The
+output give us the index of the outliers removed.
+
+## Scalling
+
+The last step before perform the model was to scale the numeric
+variables, because the variables weren't in the same scale and this
+might be detrimental for the performance.
+
+```{r scalling}
+train[,9:18] <- scale(train[,9:18])
+test[,9:18] <- scale(test[,9:18])
+```
+
+# Modelling
+
+## K-Nearest Neighbors
+
+The k-Nearest Neighbors (k-NN) classifier is an algorithm that stores
+the entire training dataset in memory. Then, when making predictions, it
+identifies the k-nearest neighbors (data points) to the new instance
+based on distance metrics, normally it use the Euclidean distance. The
+majority class label among these neighbors is then assigned as the
+predicted label for the new instance.
+
+### Training
+
+```{r ctrl}
+ctrl <- trainControl(method = "cv", 
+                     number = 5,
+                     classProbs = F, 
+                     verboseIter=F)
+```
+
+```{r knn}
+knnFit <- train(Revenue ~ ., 
+                method = "knn", 
+                data = train,
+                preProcess = c("center", "scale"),
+                tuneLength = 10,
+                trControl = ctrl)
+```
+
+### Predictions
+
+```{r knn pred}
+knnPred <- predict(knnFit, test)
+knn_cm <- confusionMatrix(knnPred,test$Revenue)
+knn_cm
+```
+
+The accuracy is 87% which is good but the number of false negative is
+higher that we desire for this project.
+
+## Neural Networks
+
+Neural Networks is a class of machine learning models inspired by the
+structure and function of the human brain. They consist of
+interconnected layers of artificial neurons that process and transform
+input data to produce output predictions. They're made up of layers of
+"neurons" that process information, which receive input signals, apply a
+mathematical transformation, and pass the result to the next layer.
+These layers are typically organized into an input layer, one or more
+hidden layers, and an output layer. Then the network finally makes a
+prediction.
+
+### Training
+
+```{r nn}
+# NN with 1 hidden layer
+nnFit <- train(Revenue ~., 
+                  method = "nnet", 
+                  data = train,
+                  preProcess = c("center", "scale"),
+                  MaxNWts = 1000,
+                  maxit = 100,
+                  tuneGrid = expand.grid(size=c(2,4,6), decay=c(0.01,0.001)),
+                  maximize = F,
+                  trControl = ctrl)
+```
+
+### Predictions
+
+```{r nn pred}
+nnPred <- predict(nnFit, newdata=test)
+nn_cm <- confusionMatrix(nnPred, test$Revenue)
+nn_cm
+```
+
+The Network Neural obtained an accuracy of 87%.
+
+## SVMs
+
+Support Vector Machines (SVMs) are supervised learning models used, in
+this case, for classification. During training, SVMs draw a line (or
+plane) that separates different groups of data points. This line is
+chosen so that it maximizes the space between the points of different
+categories.
+
+### Training
+
+```{r svm}
+svmFit <- train(Revenue ~., method = "svmRadial", 
+                data = train,
+                preProcess = c("center", "scale"),
+                tuneGrid = expand.grid(C = c(.25, .5, 1),
+                                      sigma = c(0.01,.05)),
+                trControl = ctrl)
+```
+
+### Predictions
+
+```{r svm pred}
+svm_Pred <- predict(svmFit, newdata=test)
+svm_cm <- confusionMatrix(svm_Pred, test$Revenue)
+svm_cm
+```
+
+The SVM obtained an accuracy of 89%.
+
+## Decision trees
+
+Decision Tree is a Supervised learning technique that can be used for
+solving Classification problems. It is a tree-structured classifier,
+where internal nodes represent the features of a dataset, branches
+represent the decision rules and each leaf node represents the outcome.
+In a Decision tree, there are two nodes, which are the Decision Node and
+Leaf Node. Decision nodes are used to make any decision and have
+multiple branches, whereas Leaf nodes are the output of those decisions
+and do not contain any further branches.
+
+### Training
+
+```{r dt, message = FALSE}
+dt_grid <- expand.grid(.winnow = c(TRUE, FALSE),
+                    .trials = c(1, 5, 7),
+                    .model="tree" )
+
+dtFit <- train(Revenue ~.,
+                data=train,
+                method="C5.0",
+                tuneGrid = dt_grid,
+                trControl = ctrl)
+```
+
+### Predictions
+
+```{r dt pred}
+DT_pred <- predict(dtFit, test)
+DT_cm <- confusionMatrix(DT_pred, test$Revenue)
+DT_cm
+```
+
+Even though the accuracy is 45% which is a much smaller than the other, but the error
+of false negative is smaller which is good.
+
+## Random Forests
+
+Random Forest is a popular machine learning algorithm that belongs to
+the supervised learning technique. It is based on the concept of
+ensemble learning, which is a process of combining multiple classifiers
+to solve a complex problem and to improve the performance of the model.
+Instead of relying on one decision tree, the random forest takes the
+prediction from each tree and based on the majority votes of
+predictions, and it predicts the final output.
+
+### Training
+
+```{r rf}
+rfFit <- train(Revenue ~., 
+                  method = "rf", 
+                  data = train,
+                  preProcess = c("center", "scale"),
+                  ntree = 200,
+                  cutoff=c(0.7,0.3),
+                  tuneGrid = expand.grid(mtry=c(6,8,10)),
+                  maximize = F,
+                  trControl = ctrl)
+```
+
+### Predictions
+
+```{r rf pred}
+rf_pred <- predict(rfFit, newdata=test)
+rf_cm <- confusionMatrix(rf_pred, test$Revenue)
+rf_cm
+```
+
+Random Forest obtained an accuracy of 89% which is a great result so
+far, additionally, this model minimized the error of false negative.
+
+## Gradient boosting
+
+Gradient Boosting is an ensemble learning technique used for
+classification. It constructs each new model to correct the errors of
+the ensemble so far. It focus on the residuals, or the differences
+between the actual and predicted values, of the previous models. This
+process is guided by gradient descent optimization, where each new model
+is trained to minimize a chosen loss function, such as mean squared
+error or cross-entropy loss.
+
+### Training
+
+```{r gbm}
+GBMFit <- gbm(ifelse(train$Revenue=="FALSE",0,1) ~., 
+              data=train, 
+              distribution= "bernoulli",
+              n.trees=250,
+              shrinkage = 0.01,
+              interaction.depth=2,
+              n.minobsinnode = 8)
+```
+
+### Predictions
+
+```{r gbm pred}
+threshold <- 0.5
+gbm_prob <- predict(GBMFit, newdata=test, n.trees=250, type="response")
+gbm_pred <- ifelse(gbm_prob > threshold, "TRUE", "FALSE")
+gbm_cm <- confusionMatrix(as.factor(gbm_pred), test$Revenue)
+gbm_cm
+```
+
+The accuracy of the Gradient boosting (90%) is the highest of the models
+trained in this project.
+
+# Comparative
+
+In this part, we will compare each model performed before. We will use
+the accuracy, the kappa, the roc and the auc.
+
+## Accuracy
+
+```{r accuracy, echo=FALSE}
+# Calculate Kappa and Accuracy for each model
+knn_kappa <- knn_cm$overall[2]
+knn_accuracy <- knn_cm$overall[1]
+
+nn_kappa <- nn_cm$overall[2]
+nn_accuracy <- nn_cm$overall[1]
+
+svm_kappa <- svm_cm$overall[2]
+svm_accuracy <- svm_cm$overall[1]
+
+DT_kappa <- DT_cm$overall[2]
+DT_accuracy <- DT_cm$overall[1]
+
+rf_kappa <- rf_cm$overall[2]
+rf_accuracy <- rf_cm$overall[1]
+
+gbm_kappa <- gbm_cm$overall[2]
+gbm_accuracy <- gbm_cm$overall[1]
+
+# Create a data frame with rounded values and formatted as percentages
+model_results <- data.frame(
+  Model = c("KNN", "Neural Network", "SVM", "Decision Tree", "Random Forest", "Gradient Boosting"),
+  Kappa = c(paste0(round(knn_kappa * 100, 2), "%"),
+            paste0(round(nn_kappa * 100, 2), "%"),
+            paste0(round(svm_kappa * 100, 2), "%"),
+            paste0(round(DT_kappa * 100, 2), "%"),
+            paste0(round(rf_kappa * 100, 2), "%"),
+            paste0(round(gbm_kappa * 100, 2), "%")),
+  Accuracy = c(paste0(round(knn_accuracy * 100, 2), "%"),
+               paste0(round(nn_accuracy * 100, 2), "%"),
+               paste0(round(svm_accuracy * 100, 2), "%"),
+               paste0(round(DT_accuracy * 100, 2), "%"),
+               paste0(round(rf_accuracy * 100, 2), "%"),
+               paste0(round(gbm_accuracy * 100, 2), "%"))
+)
+
+# Print the model results
+kable(model_results)
+```
+
+Based on the provided Kappa and Accuracy values:
+
+-   Random Forest has the highest Kappa (60%) and a relatively high
+    Accuracy (88%), making it a strong contender.
+-   Gradient Boosting also shows promising performance with a high
+    Accuracy (90%) and a decent Kappa (53%).
+
+## ROC
+
+Finally, once the models were implemented, we made the ROC curves. This
+is a graphical representation that illustrates the performance of a
+binary classification model across various threshold settings. It plots
+the true positive rate (sensitivity) against the false positive rate
+(specificity) for different threshold values. The area under the ROC
+curve (AUC) quantifies the model's ability to distinguish between the
+two classes, with higher AUC values indicating better discrimination
+performance.
+
+```{r roc, echo=FALSE,message=FALSE}
+# Compute ROC curve for each model
+roc_knn <- roc(test$Revenue, as.numeric(knnPred))
+roc_nn <- roc(test$Revenue, as.numeric(nnPred))
+roc_svm <- roc(test$Revenue, as.numeric(svm_Pred))
+roc_dt <- roc(test$Revenue, as.numeric(DT_pred))
+roc_rf <- roc(test$Revenue, as.numeric(rf_pred))
+roc_gbm <- roc(test$Revenue, as.numeric(gbm_prob))
+
+# Plot ROC curves
+plot(roc_knn, col="#BCEE68", main="ROC Curves for Different Models", print.thres=TRUE,lwd=3)
+plot(roc_nn, col="#8B8970", print.thres=TRUE, add=TRUE,lwd=3)
+plot(roc_dt, col="#458B74", print.thres=TRUE, add=TRUE,lwd=3)
+plot(roc_rf, col="#CDBA96", print.thres=TRUE, add=TRUE,lwd=3)
+plot(roc_gbm, col="#CD8C95", print.thres=TRUE, add=TRUE,lwd=3)
+plot(roc_svm, col="#CD5C5C", print.thres=TRUE, add=TRUE,lwd=3)
+
+# Add legend
+legend("bottomright", legend=c("KNN", "NN","SVM","DT", "RF", "GBM"), col=c("#BCEE68", "#CD8C95", "#458B74", "#CDBA96", "#8B8970","#CD5C5C"), lty=1,lwd=3)
+```
+
+```{r auc, echo=FALSE}
+# Compute AUC for each model
+auc_knn <- auc(roc_knn)
+auc_nn <- auc(roc_nn)
+auc_svm <- auc(roc_svm)
+auc_dt <- auc(roc_dt)
+auc_rf <- auc(roc_rf)
+auc_gbm <- auc(roc_gbm)
+
+# Create a data frame with model names and AUC values
+table <- data.frame(Model = c("KNN", "NN", "SVM", "DT", "RF", "GBM"),
+                        AUC = round(c(auc_knn, auc_nn, auc_svm, auc_dt, auc_rf, auc_gbm),2))
+
+# Print the table
+kable(table)
+```
+
+After analyzed the models accuracy, kappa and AUC. We will continue with
+Random Forest and Gradient Boosting incorporating an economic impact.
+
+# Economic impact
+
+Remember that this project is to investigate the possibility of having
+an ecommerce, and find the individuals that will buy the product after
+surfed in the website. In order to achieve this goal, we need to plan a
+model focusing in reduce the false negative. Which means, reduce the
+predicted "FALSE" that are indeed "TRUE", to capture the individuals
+with intentions to buy the products.
+
+Lets refresh the confusion matrix of the two model selected before.
+
+**Random Forest:**
+
+```{r confussion rf}
+rf_cm$table
+```
+
+**Gradient Boosting**
+
+```{r confussion gbm}
+gbm_cm$table
+```
+
+To carry out this analysis, we need to assign costs or profits to
+different classification outcomes. Here's a suggestion based on the
+provided information:
+
+-   Predicting a customer who will buy the product (TRUE) accurately
+    yields a profit of 20%, so the cost/unit for this scenario is 0 (no
+    cost or loss).
+-   Predicting a customer who will not buy the product (FALSE)
+    accurately incurs no profit or loss, so the cost/unit for this
+    scenario is 100.
+-   Predicting a customer who will buy the product inaccurately (as a
+    FALSE) results in a loss of 10%, so the cost/unit for this scenario
+    is 1000.
+-   Predicting a customer who will not buy the product inaccurately (as
+    a TRUE) leads to a loss of 200%, so the cost/unit for this scenario
+    is 200.
+
+```{r costunit}
+cost.unit <- c(0, 100, 1000, 200)
+```
+
+```{r economiccost}
+EconomicCost <- function(data, lev = NULL, model = NULL) {
+  y.pred = data$pred 
+  y.true = data$obs
+  CM = confusionMatrix(y.pred, y.true)$table
+  out = sum(as.vector(CM) * cost.unit) / sum(CM)
+  names(out) <- c("EconomicCost")
+  out
+}
+```
+
+```{r economiccost2}
+EconomicCost(data = data.frame(pred = rf_pred, obs = test$Revenue))
+```
+
+```{r newctrl}
+newctrl <- trainControl(method = "cv", number = 5,
+                     classProbs = FALSE, 
+                     summaryFunction = EconomicCost,
+                     verboseIter = FALSE)
+```
+
+**Random Forest**
+
+```{r rf train2}
+rf_train <- train(Revenue ~ ., 
+                  method = "rf", 
+                  data = train,
+                  preProcess = c("center", "scale"),
+                  ntree = 200,
+                  cutoff = c(0.7, 0.3),
+                  tuneGrid = expand.grid(mtry = c(6, 8, 10)), 
+                  metric = "EconomicCost",
+                  maximize = FALSE,
+                  trControl = newctrl)
+```
+
+```{r rf pred2}
+final_rf_pred <- predict(rf_train, newdata=test)
+final_rf_cm <- confusionMatrix(final_rf_pred, test$Revenue)
+final_rf_cm
+```
+
+After applying the 'EconomicCost' function, we obtained a worst accuracy
+and the less predicted true that are indeed true. Moreover, we will use
+this model and implement a smaller threshold to increase the 'TRUE'
+predicted.
+
+```{r new threshold}
+threshold <- 0.2
+final_rfProb <- predict(rf_train, newdata=test, type="prob")
+final_rfPred = rep("FALSE", nrow(test))
+final_rfPred[which(final_rfProb[,2] > threshold)] = "TRUE"
+final_rfCM = confusionMatrix(factor(final_rfPred), test$Revenue)
+final_rfCM
+```
+
+Based on this result, we observe that although the cost per unit has
+increased, indicating a stricter penalty for misclassifications, the
+accuracy has decreased. However, this decrease in accuracy is
+accompanied by an increase in the number of individuals predicted to buy
+the product, which aligns with our primary goal.
+
+**Gradient Boosting**
+
+```{r gbm grid, echo=FALSE}
+xgb_grid = expand.grid(
+  nrounds = c(500,1000),
+  eta = c(0.01, 0.001), # c(0.01,0.05,0.1)
+  max_depth = c(2, 4, 6),
+  gamma = 1,
+  colsample_bytree = c(0.2, 0.4),
+  min_child_weight = c(1,5),
+  subsample = 1
+)
+```
+
+```{r gbm2}
+final_GBMFit <- train(Revenue ~ .,  
+                        data=train,
+                        trControl = newctrl,
+                        metric="EconomicCost",
+                        maximize = F,
+                        tuneGrid = xgb_grid,
+                        preProcess = c("center", "scale"),
+                        method = "xgbTree"
+)
+```
+
+```{r gbm pred2}
+threshold <- 0.5
+# Get the predicted probabilities
+final_gbm_prob <- predict(final_GBMFit, newdata = test, n.trees = 250, type = "prob")
+
+# Extract the class labels with the highest probability
+final_gbm_pred <- ifelse(final_gbm_prob[, "TRUE"] > threshold, "TRUE", "FALSE")
+
+# Convert predicted and actual classes to factors with the same levels
+final_gbm_pred <- factor(final_gbm_pred, levels = c("FALSE","TRUE"))
+test$Revenue <- factor(test$Revenue, levels = c("FALSE","TRUE"))
+
+# Create confusion matrix
+final_gbm_cm <- confusionMatrix(final_gbm_pred, test$Revenue)
+final_gbm_cm
+```
+
+The accuracy decreased compare with the accuracy of the gradient
+boosting performed before, but the number of "TRUE" predicted well
+increased, which was our idea.
+
+We will change the threshold and see if we can obtain a better confusion
+matrix.
+
+```{r gbm pred3}
+threshold <- 0.2
+# Get the predicted probabilities
+final_gbm_prob <- predict(final_GBMFit, newdata = test, n.trees = 250, type = "prob")
+
+# Extract the class labels with the highest probability
+final_gbm_pred <- ifelse(final_gbm_prob[, "TRUE"] > threshold, "TRUE", "FALSE")
+
+# Convert predicted and actual classes to factors with the same levels
+final_gbm_pred <- factor(final_gbm_pred, levels = c("FALSE","TRUE"))
+test$Revenue <- factor(test$Revenue, levels = c("FALSE","TRUE"))
+
+# Create confusion matrix
+final_gbm_cm <- confusionMatrix(final_gbm_pred, test$Revenue)
+final_gbm_cm
+```
+
+The number of "TRUE" predicted well increased but the accuracy is much
+worst.
+
+# Conclusion
+
+After training and evaluating various models, we found that the Random
+Forest model trained with the EconomicCost metric was the most suitable
+for our objective. Despite achieving a slightly lower accuracy of 75%,
+this model demonstrated superior performance in correctly predicting
+individuals who actually made purchases. By setting a threshold of 0.2,
+we were able to increase the number of correctly predicted "TRUE"
+instances, maximizing our ability to identify potential customers who
+would buy our product on the website. While the overall accuracy may
+have decreased compared to other models, our focus on accurately
+identifying buyers aligns with our primary goal.
