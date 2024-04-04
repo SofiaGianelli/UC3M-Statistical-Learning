@@ -1,5 +1,6 @@
 # UC3M-Statistical-Learning
 This project consisted in two parts.
+
 Part 1: Statistical tools
 - Prepare the input (Download data, pre-process, EDA, etc.)
 - Classification modeling using statistical tools
